@@ -1,0 +1,41 @@
+apiVersion: apps/v1beta1
+kind: Deployment
+metadata:
+  name: nexus
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: nexus
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: nexus
+        image: sonatype/nexus3
+        ports:
+        - containerPort: 8081
+        volumeMounts:
+        - name: nexus-data
+          mountPath: /nexus-data
+      - name: nexus-repo-proxy
+        image: nsus/nexus-repo-proxy
+        ports:
+        - containerPort: 8082
+      volumes:
+      - name: nexus-data
+        persistentVolumeClaim:
+          claimName: nexus-data-volume
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexus
+spec:
+  selector:
+    app: nexus
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8082
+  type: LoadBalancer

@@ -1,0 +1,14 @@
+version: '3'
+services:
+  nexus:
+    image: sonatype/nexus3
+    ports:
+    - "8081:8081"
+    volumes:
+    - /nexus-data:/nexus-data
+  repo-proxy:
+    image: nsus/nexus-repo-proxy:latest
+    ports:
+    - "80:8082"
+    links:
+    - nexus
