@@ -1,0 +1,180 @@
+AWSTemplateFormatVersion: 2010-09-09
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: VPC Configuration
+      Parameters:
+      - Environment
+      - VpcCIDRPrefix
+      - MaintenanceVpcId
+      - MaintenanceVpcCidr
+    ParameterLabels:
+      Environment:
+        default: Environment tag of VPC
+      VpcCIDRPrefix:
+        default: First two address of /16 range
+Description: Create a VPC with public/private subnets in multi AZs using NAT gateways in each public zone for private instance outbound Internet connectivity.
+Parameters:
+  Environment:
+    Type: String
+    Description: Used for miscellaneous object names and tags
+    Default: dev
+  VpcCIDRPrefix:
+    Type: String
+    Description: IP Address range for the VPC
+    MinLength: '3'
+    MaxLength: '7'
+    AllowedPattern: (\d{1,3})\.(\d{1,3})
+    ConstraintDescription: First two class of full CIDR range as a.b of a.b.c.d/n.
+    Default: 10.0
+  MaintenanceVpcId:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: CIDR allowed to login remotely to the VPC, ideally your VPN netblock
+    ConstraintDescription: 'Must be a valid VPC ID - # aws ec2 describe-vpcs'
+  MaintenanceVpcCidr:
+    Type: String
+    Description: IP Address range of maintenance VPC
+    MinLength: '7'
+    MaxLength: '15'
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: 'True'
+      EnableDnsHostnames: 'True'
+      CidrBlock: !Sub '${VpcCIDRPrefix}.0.0/16'
+      Tags:
+      - Key: Name
+        Value: !Sub 'Vpc${Environment}'
+      - Key: Environment
+        Value: !Ref Environment
+  InetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Sub 'Igw${Environment}'
+      - Key: Environment
+        Value: !Ref Environment
+  IgwAttachment:
+    DependsOn: [ InetGateway ]
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InetGateway
+  RouteInet:
+    DependsOn: [ InetGateway, RouteTableInet ]
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableInet
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InetGateway
+  VpcPeeringForMaintenance:
+    DependsOn: [ VPC ]
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties:
+      PeerVpcId: !Ref MaintenanceVpcId
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: !Sub 'PeeringToMaintenance${Environment}'
+      - Key: Environment
+        Value: !Ref Environment
+  RouteToMaintenance:
+    DependsOn: [ VpcPeeringForMaintenance, RouteTableInet ]
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableInet
+      DestinationCidrBlock: !Ref MaintenanceVpcCidr
+      VpcPeeringConnectionId: !Ref VpcPeeringForMaintenance
+  RouteTableInet:
+    DependsOn: [ VPC ]
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: !Sub 'RouteTable${Environment}Inet'
+      - Key: SubnetType
+        Value: public
+      - Key: Environment
+        Value: !Ref Environment
+  SubnetInetAz1:
+    DependsOn: [ VPC, VpcPeeringForMaintenance, RouteTableInet ]
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/nsus-open-templates/cf/cf-subnet-pair-for-nat.yaml
+      Parameters:
+        Environment: !Ref Environment
+        VpcId: !Ref VPC
+        AvailabilityZone: 'ap-northeast-1a'
+        SubnetName: A1
+        VpcPeeringConnectionRef: !Ref VpcPeeringForMaintenance
+        VpcPeerCidr: !Ref MaintenanceVpcCidr
+        RouteTableInetRef: !Ref RouteTableInet
+        InetCidrBlock: !Sub '${VpcCIDRPrefix}.199.0/24'
+        NatCidrBlock: !Sub '${VpcCIDRPrefix}.1.0/24'
+      Tags:
+      - Key: Environment
+        Value: !Ref Environment
+  SubnetInetAz2:
+    DependsOn: [ VPC, VpcPeeringForMaintenance, RouteTableInet ]
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/nsus-open-templates/cf/cf-subnet-pair-for-nat.yaml
+      Parameters:
+        Environment: !Ref Environment
+        VpcId: !Ref VPC
+        AvailabilityZone: 'ap-northeast-1c'
+        SubnetName: C1
+        VpcPeeringConnectionRef: !Ref VpcPeeringForMaintenance
+        VpcPeerCidr: !Ref MaintenanceVpcCidr
+        RouteTableInetRef: !Ref RouteTableInet
+        InetCidrBlock: !Sub '${VpcCIDRPrefix}.198.0/24'
+        NatCidrBlock: !Sub '${VpcCIDRPrefix}.2.0/24'
+      Tags:
+      - Key: Environment
+        Value: !Ref Environment
+  SubnetInetAz3:
+    DependsOn: [ VPC, VpcPeeringForMaintenance, RouteTableInet ]
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/nsus-open-templates/cf/cf-subnet-pair-for-nat.yaml
+      Parameters:
+        Environment: !Ref Environment
+        VpcId: !Ref VPC
+        AvailabilityZone: 'ap-northeast-1d'
+        SubnetName: D1
+        VpcPeeringConnectionRef: !Ref VpcPeeringForMaintenance
+        VpcPeerCidr: !Ref MaintenanceVpcCidr
+        RouteTableInetRef: !Ref RouteTableInet
+        InetCidrBlock: !Sub '${VpcCIDRPrefix}.197.0/24'
+        NatCidrBlock: !Sub '${VpcCIDRPrefix}.3.0/24'
+      Tags:
+      - Key: Environment
+        Value: !Ref Environment
+  SecurityGroupMaintenance:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${Environment}Maintenance'
+      GroupDescription: 'Access channels for maintenance'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: !Ref MaintenanceVpcCidr
+      - IpProtocol: tcp
+        FromPort: 3389
+        ToPort: 3389
+        CidrIp: !Ref MaintenanceVpcCidr
+      Tags:
+      - Key: Environment
+        Value: !Ref Environment
+Outputs:
+  VPC:
+    Description: VPC ID of the new VPC
+    Value: !Ref VPC
+

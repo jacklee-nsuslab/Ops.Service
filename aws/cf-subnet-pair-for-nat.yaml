@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create a VPC with public/private subnets in multi AZs using NAT gateways in each public zone for private instance outbound Internet connectivity.
+Parameters:
+  Environment:
+    Type: String
+    Description: Used for miscellaneous object names and tags
+  VpcId:
+    Type: 'AWS::EC2::VPC::Id'
+  AvailabilityZone:
+    Type: String
+    Description: First AZ to use for subnets, etc.
+    ConstraintDescription: 'Must be a valid AZ - # aws ec2 describe-availability-zones'
+    Default: ap-northeast-1a
+  SubnetName:
+    Type: String
+    Description: Subnet tagging name
+  VpcPeeringConnectionRef:
+    Type: String
+    Description: VPC Peering Connection
+  VpcPeerCidr:
+    Type: String
+    Description: IP Address range of VPC Peering
+    MinLength: '7'
+    MaxLength: '15'
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+  RouteTableInetRef:
+    Type: String
+    Description: Common internet route table
+  InetCidrBlock:
+    Type: String
+    Description: IP Address range for the VPC
+    MinLength: '7'
+    MaxLength: '15'
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+  NatCidrBlock:
+    Type: String
+    Description: IP Address range for the VPC
+    MinLength: '7'
+    MaxLength: '15'
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+Resources:
+  SubnetInet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcId
+      AvailabilityZone: !Ref AvailabilityZone
+      CidrBlock: !Ref InetCidrBlock 
+      Tags:
+      - Key: SubnetName
+        Value: !Sub 'Subnet${Environment}${SubnetName}Inet'
+      - Key: SubnetType
+        Value: public
+      - Key: Environment
+        Value: !Ref Environment
+  RouteTableAssocInet:
+    DependsOn: [ SubnetInet ]
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetInet
+      RouteTableId: !Ref RouteTableInetRef
+  SubnetNat:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcId
+      AvailabilityZone: !Ref AvailabilityZone
+      CidrBlock: !Ref NatCidrBlock
+      Tags:
+      - Key: Name
+        Value: !Sub 'Subnet${Environment}${SubnetName}Nat'
+      - Key: SubnetType
+        Value: private
+      - Key: Environment
+        Value: !Ref Environment
+  RouteNat:
+    DependsOn: [ RouteTableNat, NatGateway ]
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableNat
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway
+  RouteMaintenance:
+    DependsOn: [ RouteTableNat ]
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableNat
+      DestinationCidrBlock: !Ref VpcPeerCidr
+      VpcPeeringConnectionId: !Ref VpcPeeringConnectionRef
+  RouteTableNat:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+      - Key: Name
+        Value: !Sub 'RouteTable${Environment}${SubnetName}Nat'
+      - Key: SubnetType
+        Value: private
+      - Key: Environment
+        Value: !Ref Environment
+  RouteTableNatAssoc:
+    DependsOn: [ SubnetNat, RouteTableNat ]
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetNat
+      RouteTableId: !Ref RouteTableNat
+  NatGatewayEip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  NatGateway:
+    DependsOn: [ NatGatewayEip, SubnetNat ]
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEip.AllocationId
+      SubnetId: !Ref SubnetNat
+Outputs:
+  NatSubnet:
+    Description: Private subnet ID
+    Value: !Ref SubnetNat
+  InetSubnet:
+    Description: Public subnet ID
+    Value: !Ref SubnetInet
+  NatGateway:
+    Description: NAT gateway
+    Value: !Ref NatGateway
+  NatGatewayEip:
+    Description: EIP of NAT gateway
+    Value: !Ref NatGatewayEip
+  
